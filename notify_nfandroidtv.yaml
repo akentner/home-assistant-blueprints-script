@@ -1,0 +1,228 @@
+blueprint:
+  name: '[Notify] Notifications for AndroidTV'
+  description: Fire a notification only if it is active by a binary_sensor
+  domain: script
+  # source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/template/blueprints/inverted_binary_sensor.yaml
+  input:
+
+    notify_action:
+      name: "Notify Action"
+      description: "Select the nfandroid notify service."
+      selector:
+        config_entry:
+          # integration: mobile_app
+          integration: nfandroidtv
+          # integration: alexa_media
+
+    # listen_targets:
+    #   name: Listen to targets
+    #   description: The targets to listen to
+    #   selector:
+    #     select:
+    #       multiple: true
+    #       options:
+    #         # - label: 'Person: Alex'  
+    #         #   value: 'person_alex'
+    #         # - label: 'Person: Ann-Ka'
+    #         #   value: 'person_annka'
+    #         # - label: 'Person: Kara'
+    #         #   value: 'person_kara'
+    #         # - label: "Device: Mobile App"
+    #         #   value: 'device_mobile_app'
+    #         - label: "Devices: Screen"
+    #           value: 'device_screen'
+    #         # - label: "Device: Alexa"
+    #         #   value: 'device_alexa'
+
+
+mode: restart
+
+variables:
+  input_notify_action: !input notify_action
+  input_listen_targets:
+    - device_screen
+
+fields:
+  targets:
+    name: Targets
+    description: The targets to notify
+    advanced: true
+    required: true
+    default: 
+      - device_screen
+    selector:
+      select:
+        multiple: true
+        options:
+            # - label: 'Person: Alex'  
+            #   value: 'person_alex'
+            # - label: 'Person: Ann-Ka'
+            #   value: 'person_annka'
+            # - label: 'Person: Kara'
+            #   value: 'person_kara'
+            # - label: "Device: Mobile App"
+            #   value: 'device_mobile_app'
+            - label: "Devices: Screen"
+              value: 'device_screen'
+            # - label: "Device: Alexa"
+            #   value: 'device_alexa'
+
+  message:
+    name: Message
+    # description: The targets to notify
+    advanced: false
+    required: true
+    selector:
+      text:
+        multiline: true
+
+  title:
+    name: Title
+    # description: The targets to notify
+    advanced: false
+    required: false
+    default: None
+    selector:
+      text:
+
+  fontsize:
+    name: Font size
+    advanced: true
+    required: false
+    default: 'max'
+    selector:
+      select:
+        options:
+          - small
+          - medium
+          - large
+          - max
+
+  position:
+    name: Position
+    advanced: true
+    required: false
+    default: 'bottom-right'
+    selector:
+      select:
+        options:
+          - 'bottom-right'
+          - 'bottom-left'
+          - 'top-right'
+          - 'top-left'
+          - 'center'
+
+  color:
+    name: Color
+    advanced: true
+    required: false
+    default: 'indigo'
+    selector:
+      select:
+        options:
+          - grey
+          - black
+          - indigo
+          - green
+          - red
+          - cyan
+          - teal
+          - amber
+          - pink
+
+  transparency:
+    name: Transparency
+    advanced: true
+    required: false
+    default: 0
+    selector:
+      number:
+        unit_of_measurement: '%'
+        min: 0
+        max: 100
+        step: 25
+
+  duration:
+    name: Duration
+    advanced: true
+    required: false
+    default: 5
+    selector:
+      number:
+        min: 0
+        max: 20
+
+  interrupt:
+    name: Interrupt
+    advanced: true
+    required: false
+    default: false
+    selector:
+      boolean:
+
+  image_url:
+    name: Image
+    advanced: true
+    required: false
+    default: false
+    selector:
+      text:
+
+  icon_url:
+    name: Icon
+    advanced: true
+    required: false
+    default: false
+    selector:
+      text:
+
+
+sequence:
+
+  - variables:
+      notify_action: "notify.{{ config_entry_attr(input_notify_action, 'title') }}"
+      target: >-
+        {%- if(target is string) -%}
+          {{- targets.split(',')|map('trim')|list -}}
+        {%- elif(target is iterable) -%}
+          {{- target|map('trim')|list -}}
+        {%- else -%}
+          {{ [] -}}
+        {%- endif -%}
+      message: "{{- message.split('|')|map('trim')|map('striptags')|join('<br>') -}}"
+      title: "{{- title -}}"
+      color: "{{- color | default('indigo') -}}"
+      position: "{{- position | default('bottom-right') -}}"
+      fontsize: "{{- fontsize | default('max') -}}"
+      transparency: "{{- transparency | default(0) -}}%"
+      duration: "{{- duration | default(5) | int -}}"
+      interrupt: "{{- interrupt | default(False) | bool -}}"
+      image_url: "{{- image_url | default(None) -}}"
+      icon_url: >-
+        {%- from 'emoji.jinja' import emoji_to_png -%}
+        {%- if icon_url is not none -%}
+          {{ icon_url }}
+        {%- elif title is not none -%}
+          {{ emoji_to_png(title) }}
+        {%- else -%}  
+          {{ None }}
+        {%- endif -%}
+
+  - condition: template
+    value_template: "{{ target | select(\"in\", input_listen_targets) | list | count > 0 }}"
+
+  - action: "{{ notify_action | default('notify.send_message') }}"
+    data:
+      message: "{{ message }}"
+      title: "{{ title }}"
+      data:
+        color: "{{ color }}"
+        position: "{{ position }}"
+        fontsize: "{{ fontsize }}"
+        transparency: "{{ transparency }}"
+        duration: "{{ duration }}"
+        interrupt: "{{ interrupt }}"
+        image:
+          url: "{{ image }}"
+        icon:
+          url: "{{ icon }}"

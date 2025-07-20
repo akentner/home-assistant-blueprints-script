@@ -1,0 +1,223 @@
+blueprint:
+  name: Alarm Control Panel
+  description: Script act as business logic for an alarm control panel
+  domain: script
+  # source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/template/blueprints/inverted_binary_sensor.yaml
+  input:
+    entity_id:
+      name: Variable Entity
+      description: The entity_id of the alarm control panel sensor
+      selector:
+        entity:
+          domain: sensor
+          integration: variable
+    default_pending_time:
+      name: Default Pending time
+      selector:
+        number:
+          min: 0
+          max: 600
+          step: 1
+      default: 0
+    default_trigger_time:
+      name: Default Trigger time
+      selector:
+        number:
+          min: 1
+          max: 600
+          step: 1
+      default: 30
+    trigger_actions:
+      name: Trigger Actions
+      description: Actions to be executed when the alarm is triggered
+      selector:
+        action:
+      default: []  
+    arm_actions:
+      name: Arm Actions
+      description: Actions to be executed when the alarm is armed
+      selector:
+        action:
+      default: []
+    disarm_actions:
+      name: Disarm Actions
+      description: Actions to be executed when the alarm is disarmed
+      selector:
+        action:
+      default: []
+
+
+mode: restart
+
+variables:
+  input_entity_id: !input entity_id
+  default_pending_time: !input default_pending_time
+  default_trigger_time: !input default_trigger_time
+
+fields:
+  to_state:
+    name: To State
+    description: The next state of the alarm control panel
+    example: disarmed
+    advanced: false
+    required: true
+    selector:
+      select:
+        options:
+          - disarmed
+          - armed_away
+          - armed_home
+          - armed_night
+          - armed_vacation
+          - triggered
+    default: disarmed
+  trigger_entities:
+    name: Triggered by entities
+    selector:
+      entity:
+        multiple: true
+    default: []
+  pending_time:
+    name: Pending time
+    selector:
+      number:
+        min: 0
+        max: 3600
+        step: 1
+    default: 0
+  trigger_time:
+    name: Trigger time
+    selector:
+      number:
+        min: 1
+        max: 3600
+        step: 1
+    default: 30
+  trigger_actions:
+    name: Trigger Actions
+    selector:
+      action: {}
+
+sequence:
+  - variables:
+      pending_time: "{{ pending_time | default(default_pending_time) | int }}"
+      trigger_time: "{{ trigger_time | default(default_trigger_time) | int }}"
+      armed: >-
+        {{- iif(
+          states(input_entity_id) in ['armed_away', 'armed_home', 'armed_night', 'armed_vacation', 'armed_custom_bypass'],
+          states(input_entity_id),
+          iif(
+            states(input_entity_id) in ['triggered', 'pending'],
+            state_attr(input_entity_id, 'armed'),
+            None
+          )
+        ) -}}
+      is_triggered: "{{ is_state(input_entity_id, 'triggered') }}"
+
+  - choose:
+      ### Disarm
+      - conditions:
+          - alias: to_state is disarmed
+            condition: template
+            value_template: "{{ to_state == 'disarmed' }}"
+        sequence: 
+          - if:
+              - condition: template
+                value_template: "{{ pending_time > 0 }}"
+            then:
+              - action: variable.update_sensor
+                data:
+                  entity_id: "{{ input_entity_id }}"
+                  value: pending
+                  replace_attributes: true
+                  attributes:
+                    trigger_entities: "{{ state_attr(input_entity_id, 'trigger_entities') }}"
+                    triggered_at: "{{ state_attr(input_entity_id, 'triggered_at') }}"
+                    armed: "{{ armed }}"
+                    trigger_time: "{{ trigger_time }}"
+                    is_triggered: "{{ is_triggered }}"
+                    pending_time: "{{ pending_time }}"
+              - delay:
+                  seconds: "{{ pending_time | int }}"
+          - action: variable.update_sensor
+            data:
+              entity_id: "{{ input_entity_id }}"
+              value: "{{ to_state }}"
+              replace_attributes: true
+              attributes:
+                trigger_entities: "{{ state_attr(input_entity_id, 'trigger_entities') }}"
+                triggered_at: "{{ state_attr(input_entity_id, 'triggered_at') }}"
+                armed: "{{ armed }}"
+                trigger_time: "{{ trigger_time }}"
+                is_triggered: "{{ is_triggered }}"
+                pending_time: "{{ pending_time }}"
+          - sequence: !input disarm_actions      
+
+      ### Arm (Away, Home, Night, Vacation, Custom Bypass)  
+      - conditions:
+          - alias: to_state is armed
+            condition: template
+            value_template: "{{ to_state in ['armed_away', 'armed_home', 'armed_night', 'armed_vacation', 'armed_custom_bypass'] }}"  
+        sequence: 
+          - if:
+              - condition: template
+                value_template: "{{ pending_time > 0 }}"
+            then:
+              - action: variable.update_sensor
+                data:
+                  entity_id: "{{ input_entity_id }}"
+                  value: pending
+                  replace_attributes: true
+                  attributes:
+                    trigger_entities: "{{ state_attr(input_entity_id, 'trigger_entities') }}"
+                    triggered_at: "{{ state_attr(input_entity_id, 'triggered_at') }}"
+                    armed: "{{ to_state }}"
+                    trigger_time: "{{ trigger_time }}"
+                    is_triggered: "{{ is_triggered }}"
+                    pending_time: "{{ pending_time }}"
+              - delay:
+                  seconds: "{{ pending_time | int }}"
+          - action: variable.update_sensor
+            data:
+              entity_id: "{{ input_entity_id }}"
+              value: "{{ to_state }}"
+              replace_attributes: true
+              attributes:
+                trigger_entities: "{{ state_attr(input_entity_id, 'trigger_entities') }}"
+                triggered_at: "{{ state_attr(input_entity_id, 'triggered_at') }}"
+                armed: "{{ to_state }}"
+                trigger_time: "{{ trigger_time }}"
+                is_triggered: "{{ is_triggered }}"
+                pending_time: "{{ pending_time }}"
+          - sequence: !input arm_actions      
+
+      ### Triggered
+      - conditions:
+          - alias: to_state is triggered
+            condition: template
+            value_template: "{{ to_state == 'triggered' and armed != None}}"
+        sequence: 
+          - if:
+              - condition: template
+                value_template: "{{ not is_state(input_entity_id, 'triggered') }}"
+            then:
+              - sequence: !input trigger_actions
+
+          - action: variable.update_sensor
+            data:
+              entity_id: "{{ input_entity_id }}"
+              value: triggered
+              replace_attributes: true
+              attributes:
+                trigger_entities: "{{ trigger_entities }}"
+                last_triggered_at: "{{ now().isoformat() }}"
+                armed: "{{ armed }}"
+                trigger_time: "{{ trigger_time }}"
+                is_triggered: "{{ is_triggered }}"
+                pending_time: "{{ pending_time }}"
+          - delay:
+              seconds: "{{ trigger_time | int }}"
+          - action: variable.update_sensor
+            data:
+              entity_id: "{{ input_entity_id }}"
+              value: "{{ armed }}"
